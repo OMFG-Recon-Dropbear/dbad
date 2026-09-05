@@ -1,0 +1,54 @@
+name: Publish container image
+
+# Builds the production image natively on an ARM64 runner (the NAS is ARM64) and pushes it
+# to GitHub Container Registry. The NAS then only pulls — it never has to run `next build`.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "README.md"]
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: Public site URL baked into the client bundle
+        default: https://dbad.disruptivelabs.com.au
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: Build & push (linux/arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack source bundle if the repo carries one
+        run: |
+          if [ -f dbad-src.zip ]; then
+            rm -rf build-src && mkdir build-src && unzip -q dbad-src.zip -d build-src
+            echo "CONTEXT=build-src" >> "$GITHUB_ENV"
+          else
+            echo "CONTEXT=." >> "$GITHUB_ENV"
+          fi
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/dbad" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_SITE_URL=${{ inputs.site_url || 'https://dbad.disruptivelabs.com.au' }}
+            DBAD_IGNORE_TS_ERRORS=1
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
